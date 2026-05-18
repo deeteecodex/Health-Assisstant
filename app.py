@@ -155,7 +155,7 @@ with st.sidebar:
 
                             # Embed entire batch in one API call
                             result = client.models.embed_content(
-                                model="gemini-embedding-2-flash",
+                                model="gemini-embedding-001",
                                 contents=batch_texts,
                                 config={"output_dimensionality": 1536}
                             )
@@ -213,7 +213,7 @@ if question := st.chat_input("Ask a question from the course material..."):
 
             # Step 1: Embed the question
             q_embedding = client.models.embed_content(
-                model="gemini-embedding-2-flash",
+                model="gemini-embedding-001",
                 contents=question,
                 config={"output_dimensionality": 1536}
             ).embeddings[0].values
