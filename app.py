@@ -7,7 +7,24 @@ from pathlib import Path
 
 # Load secrets
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+# Password protection
+def check_password():
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
 
+    if not st.session_state.authenticated:
+        st.markdown('<div class="main-title">💜 Health Knowledge Assistant</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subtitle">Please enter your password to continue</div>', unsafe_allow_html=True)
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if password == os.getenv("APP_PASSWORD"):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect password")
+        st.stop()
+
+check_password()
 
 # Connect to Google and Supabase
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
