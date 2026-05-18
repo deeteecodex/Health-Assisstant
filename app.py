@@ -267,7 +267,7 @@ Answer:"""
             Return ONLY the 3 questions, one per line, no numbering, no extra text."""
 
                     followup_response = client.models.generate_content(
-                        model="gemini-2.0-flash",
+                        model="gemini-2.5-flash",
                         contents=followup_prompt
                     )
 
