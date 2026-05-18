@@ -1,0 +1,5 @@
+google-genai
+supabase
+pypdf
+python-dotenv
+streamlit
