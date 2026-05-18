@@ -228,7 +228,7 @@ if question := st.chat_input("Ask a question from the course material..."):
                     if attempt < max_retries - 1:
                         time.sleep(3)
                     else:
-                        st.warning("Google's servers are busy right now. Please try again in a moment 🙏")
+                        st.warning("Google's servers are busy right now. Please try again in a moment.")
                         st.stop()
 
             # Step 2: Search Supabase
