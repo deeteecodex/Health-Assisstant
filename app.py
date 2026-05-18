@@ -212,11 +212,24 @@ if question := st.chat_input("Ask a question from the course material..."):
             question = cleaned.text.strip()
 
             # Step 1: Embed the question
-            q_embedding = client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=question,
-                config={"output_dimensionality": 1536}
-            ).embeddings[0].values
+          # Step 1: Embed the question (with retry)
+            import time
+            max_retries = 3
+            q_embedding = None
+            for attempt in range(max_retries):
+                try:
+                    q_embedding = client.models.embed_content(
+                        model="gemini-embedding-001",
+                        contents=question,
+                        config={"output_dimensionality": 1536}
+                    ).embeddings[0].values
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(3)
+                    else:
+                        st.warning("Google's servers are busy right now. Please try again in a moment 🙏")
+                        st.stop()
 
             # Step 2: Search Supabase
             results = supabase.rpc("match_documents", {
@@ -240,10 +253,20 @@ Question: {question}
 
 Answer:"""
 
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt
-            )
+           response = None
+            for attempt in range(max_retries):
+                try:
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=prompt
+                    )
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(3)
+                    else:
+                        st.warning("Google's servers are busy right now. Please try again in a moment.")
+                        st.stop()
 
             answer = response.text
             st.markdown(answer)
