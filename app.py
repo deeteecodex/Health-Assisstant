@@ -1,12 +1,16 @@
 import os
+import time
+import tempfile
 import streamlit as st
 from google import genai
 from supabase import create_client
 from dotenv import load_dotenv
 from pathlib import Path
+from pypdf import PdfReader
 
 # Load secrets
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+
 # Password protection
 def check_password():
     if "authenticated" not in st.session_state:
@@ -115,23 +119,15 @@ with st.sidebar:
         if st.button("⚡ Process PDF", use_container_width=True):
             with st.spinner(f"Processing {uploaded_file.name}..."):
                 try:
-                    # Read PDF
-                    import tempfile
-                    from pypdf import PdfReader
-                    import time
-
-                    # Save uploaded file temporarily
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                         tmp.write(uploaded_file.read())
                         tmp_path = tmp.name
 
-                    # Extract text
                     reader = PdfReader(tmp_path)
                     text = ""
                     for page in reader.pages:
                         text += page.extract_text() + "\n"
 
-                    # Chunk it
                     words = text.split()
                     chunks = []
                     start = 0
@@ -141,37 +137,31 @@ with st.sidebar:
                         chunks.append(chunk)
                         start = end - 50
 
-                    # Embed and save each chunk
-                        # Filter out tiny chunks
-                        valid_chunks = [(i, c) for i, c in enumerate(chunks) if len(c.strip()) >= 50]
+                    valid_chunks = [(i, c) for i, c in enumerate(chunks) if len(c.strip()) >= 50]
+                    batch_size = 20
+                    progress = st.progress(0)
 
-                        # Process in batches of 20
-                        batch_size = 20
-                        progress = st.progress(0)
+                    for batch_start in range(0, len(valid_chunks), batch_size):
+                        batch = valid_chunks[batch_start:batch_start + batch_size]
+                        batch_texts = [c for _, c in batch]
 
-                        for batch_start in range(0, len(valid_chunks), batch_size):
-                            batch = valid_chunks[batch_start:batch_start + batch_size]
-                            batch_texts = [c for _, c in batch]
+                        result = client.models.embed_content(
+                            model="gemini-embedding-001",
+                            contents=batch_texts,
+                            config={"output_dimensionality": 1536}
+                        )
 
-                            # Embed entire batch in one API call
-                            result = client.models.embed_content(
-                                model="gemini-embedding-001",
-                                contents=batch_texts,
-                                config={"output_dimensionality": 1536}
-                            )
+                        rows = []
+                        for j, (i, chunk) in enumerate(batch):
+                            rows.append({
+                                "content": chunk,
+                                "embedding": result.embeddings[j].values,
+                                "metadata": {"source": uploaded_file.name, "chunk": i}
+                            })
 
-                            # Save all chunks in this batch
-                            rows = []
-                            for j, (i, chunk) in enumerate(batch):
-                                rows.append({
-                                    "content": chunk,
-                                    "embedding": result.embeddings[j].values,
-                                    "metadata": {"source": uploaded_file.name, "chunk": i}
-                                })
-
-                            supabase.table("documents").insert(rows).execute()
-                            progress.progress((batch_start + len(batch)) / len(valid_chunks))
-                            time.sleep(2)
+                        supabase.table("documents").insert(rows).execute()
+                        progress.progress((batch_start + len(batch)) / len(valid_chunks))
+                        time.sleep(2)
 
                     st.success(f"✅ {uploaded_file.name} added successfully!")
                     os.unlink(tmp_path)
@@ -203,18 +193,16 @@ if question := st.chat_input("Ask a question from the course material..."):
 
     with st.chat_message("assistant"):
         with st.spinner("Searching knowledge base..."):
+            max_retries = 3
 
             # Step 0: Clean up the question
             cleaned = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-2.0-flash",
                 contents=f"Fix any typos and rephrase this health question clearly, return only the fixed question, nothing else: {question}"
             )
             question = cleaned.text.strip()
 
-            # Step 1: Embed the question
-          # Step 1: Embed the question (with retry)
-            import time
-            max_retries = 3
+            # Step 1: Embed the question with retry
             q_embedding = None
             for attempt in range(max_retries):
                 try:
@@ -228,7 +216,7 @@ if question := st.chat_input("Ask a question from the course material..."):
                     if attempt < max_retries - 1:
                         time.sleep(3)
                     else:
-                        st.warning("Google's servers are busy right now. Please try again in a moment.")
+                        st.warning("Google's servers are busy right now. Please try again in a moment 🙏")
                         st.stop()
 
             # Step 2: Search Supabase
@@ -241,7 +229,7 @@ if question := st.chat_input("Ask a question from the course material..."):
             # Step 3: Build context
             context = "\n\n".join([r["content"] for r in results.data])
 
-            # Step 4: Ask Gemini
+            # Step 4: Ask Gemini with retry
             prompt = f"""You are a helpful health and nutrition assistant.
 Use ONLY the following information from the course material to answer the question.
 If the answer isn't in the material, say so honestly.
@@ -253,11 +241,11 @@ Question: {question}
 
 Answer:"""
 
-           response = None
+            response = None
             for attempt in range(max_retries):
                 try:
                     response = client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model="gemini-2.0-flash",
                         contents=prompt
                     )
                     break
@@ -265,7 +253,7 @@ Answer:"""
                     if attempt < max_retries - 1:
                         time.sleep(3)
                     else:
-                        st.warning("Google's servers are busy right now. Please try again in a moment.")
+                        st.warning("Google's servers are busy right now. Please try again in a moment 🙏")
                         st.stop()
 
             answer = response.text
@@ -283,27 +271,27 @@ Answer:"""
                     seen.add(key)
                     source_tags += f'<span class="source-tag">📄 {source} — section {chunk}</span>'
 
-                    # Step 6: Generate follow-up questions
-                    followup_prompt = f"""Based on this question: "{question}"
-            And this answer: "{answer}"
-            Generate exactly 3 short follow-up questions the user might want to ask next.
-            Return ONLY the 3 questions, one per line, no numbering, no extra text."""
-
-                    followup_response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=followup_prompt
-                    )
-
-                    followups = [q.strip() for q in followup_response.text.strip().split("\n") if q.strip()][:3]
-
-                    st.markdown("**💡 You might also want to ask:**")
-                    for fq in followups:
-                        if st.button(fq, key=fq):
-                            st.session_state.messages.append({"role": "user", "content": fq})
-                            st.rerun()
-
             sources_html = f'<div class="source-card"><strong>📚 Sources used:</strong><br>{source_tags}</div>'
             st.markdown(sources_html, unsafe_allow_html=True)
+
+            # Step 6: Follow-up questions
+            followup_prompt = f"""Based on this question: "{question}"
+And this answer: "{answer}"
+Generate exactly 3 short follow-up questions the user might want to ask next.
+Return ONLY the 3 questions, one per line, no numbering, no extra text."""
+
+            followup_response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=followup_prompt
+            )
+
+            followups = [q.strip() for q in followup_response.text.strip().split("\n") if q.strip()][:3]
+
+            st.markdown("**💡 You might also want to ask:**")
+            for fq in followups:
+                if st.button(fq, key=fq):
+                    st.session_state.messages.append({"role": "user", "content": fq})
+                    st.rerun()
 
             st.session_state.messages.append({
                 "role": "assistant",
