@@ -51,7 +51,7 @@ def split_into_chunks(text, chunk_size=500, overlap=50):
 # -----------------------------------
 def get_embedding(text):
     result = client.models.embed_content(
-        model="gemini-embedding-2-flash",
+        model="gemini-embedding-001",
         contents=text,
         config={"output_dimensionality": 1536}
     )
@@ -96,7 +96,7 @@ def process_all_pdfs(folder_path):
 
             # Embed entire batch in one call
             result = client.models.embed_content(
-                model="gemini-embedding-2-flash",
+                model="gemini-embedding-001",
                 contents=batch_texts,
                 config={"output_dimensionality": 1536}
             )
