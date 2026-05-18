@@ -10,8 +10,7 @@ import time
 from pathlib import Path
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 import os
-print("URL:", os.getenv("SUPABASE_URL"))
-print("KEY:", os.getenv("SUPABASE_KEY"))
+
 
 
 # Connect to Google AI
