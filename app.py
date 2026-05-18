@@ -197,7 +197,7 @@ if question := st.chat_input("Ask a question from the course material..."):
 
             # Step 0: Clean up the question
             cleaned = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=f"Fix any typos and rephrase this health question clearly, return only the fixed question, nothing else: {question}"
             )
             question = cleaned.text.strip()
@@ -245,7 +245,7 @@ Answer:"""
             for attempt in range(max_retries):
                 try:
                     response = client.models.generate_content(
-                        model="gemini-2.0-flash",
+                        model="gemini-2.5-flash",
                         contents=prompt
                     )
                     break
@@ -281,7 +281,7 @@ Generate exactly 3 short follow-up questions the user might want to ask next.
 Return ONLY the 3 questions, one per line, no numbering, no extra text."""
 
             followup_response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=followup_prompt
             )
 
