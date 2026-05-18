@@ -155,7 +155,7 @@ with st.sidebar:
 
                             # Embed entire batch in one API call
                             result = client.models.embed_content(
-                                model="gemini-embedding-001",
+                                model="gemini-embedding-2-flash-001",
                                 contents=batch_texts,
                                 config={"output_dimensionality": 1536}
                             )
