@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Load secrets
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
-print("Keys loaded:", os.getenv("GOOGLE_API_KEY")[:8], "...")
+
 
 # Connect to Google and Supabase
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
