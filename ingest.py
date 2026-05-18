@@ -51,7 +51,7 @@ def split_into_chunks(text, chunk_size=500, overlap=50):
 # -----------------------------------
 def get_embedding(text):
     result = client.models.embed_content(
-        model="gemini-embedding-001",
+        model="gemini-embedding-2-flash-001",
         contents=text,
         config={"output_dimensionality": 1536}
     )
