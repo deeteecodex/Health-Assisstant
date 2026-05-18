@@ -53,9 +53,10 @@ from google.genai.errors import ClientError
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 # This decorator will automatically retry if a ClientError (like 429) happens
+# Rate-limit resilient embedding function (UPGRADED WAIT WINDOW)
 @retry(
-    wait=wait_random_exponential(min=2, max=60),
-    stop=stop_after_attempt(5),
+    wait=wait_random_exponential(min=10, max=65), # Force longer pauses up to 65s
+    stop=stop_after_attempt(7),                  # Give it more chances to outlast the 1-min lock
     reraise=True
 )
 def embed_batch_with_retry(client, texts):
@@ -137,6 +138,8 @@ def process_all_pdfs(folder_path):
 
             # Tiny safety buffer sleep
             time.sleep(3)
+            print(f"  Cooling down API for 10 seconds...")
+            time.sleep(10)
 
     print("\n✅ Processing run complete! All files caught up.")
 
