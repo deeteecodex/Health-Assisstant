@@ -185,7 +185,8 @@ for message in st.session_state.messages:
             st.markdown(message["sources"], unsafe_allow_html=True)
 
 # Handle new question
-if question := st.chat_input("Ask a question from the course material..."):
+pending = st.session_state.pop("pending_question", None)
+if question := (pending or st.chat_input("Ask a question from the course material...")):
 
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
@@ -290,7 +291,7 @@ Return ONLY the 3 questions, one per line, no numbering, no extra text."""
             st.markdown("**💡 You might also want to ask:**")
             for fq in followups:
                 if st.button(fq, key=fq):
-                    st.session_state.messages.append({"role": "user", "content": fq})
+                    st.session_state.pending_question = fq
                     st.rerun()
 
             st.session_state.messages.append({
