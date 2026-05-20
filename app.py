@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import tempfile
 import streamlit as st
@@ -109,6 +110,17 @@ st.markdown("""
         border-top: 1px solid rgba(168, 85, 247, 0.2) !important;
         padding-top: 1rem !important;
     }
+
+    .history-item {
+        background: rgba(168, 85, 247, 0.1);
+        border: 1px solid rgba(168, 85, 247, 0.2);
+        border-radius: 8px;
+        padding: 8px 12px;
+        margin: 4px 0;
+        font-size: 0.8rem;
+        color: #c4b5fd;
+        cursor: pointer;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -127,8 +139,23 @@ def ask_gpt(prompt):
     )
     return response.choices[0].message.content
 
-# Sidebar for PDF upload
+def save_message(role, content, sources=""):
+    supabase.table("conversations").insert({
+        "role": role,
+        "content": content,
+        "sources": sources
+    }).execute()
+
+def load_history():
+    result = supabase.table("conversations")\
+        .select("*")\
+        .order("created_at", desc=False)\
+        .execute()
+    return result.data
+
+# Sidebar
 with st.sidebar:
+    # PDF Upload
     st.markdown("### 📚 Add New Knowledge")
     st.caption("Upload a new PDF to add it to the knowledge base")
 
@@ -185,62 +212,77 @@ with st.sidebar:
 
                 except Exception as e:
                     st.error(f"Something went wrong: {e}")
-# Chat History                    
-    st.markdown("---")
-    st.markdown("### 💬 Chat History")
-    
-    if st.button("📥 Download Chat", use_container_width=True):
-        if st.session_state.messages:
-            chat_text = ""
-            for msg in st.session_state.messages:
-                role = "You" if msg["role"] == "user" else "Assistant"
-                chat_text += f"{role}:\n{msg['content']}\n\n"
-                if "sources" in msg:
-                    # strip HTML tags for plain text
-                    import re
-                    clean = re.sub('<[^<]+?>', '', msg["sources"])
-                    chat_text += f"Sources: {clean}\n\n"
-                chat_text += "-" * 40 + "\n\n"
 
-            st.download_button(
-                label="📄 Click to Download",
-                data=chat_text,
-                file_name="health_consultation.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
-        else:
-            st.warning("No chat history yet!")
-    
+    st.markdown("---")
+
+    # Chat History
+    st.markdown("### 💬 Chat History")
+
     if st.button("🗑️ Clear Chat", use_container_width=True):
         st.session_state.messages = []
+        supabase.table("conversations").delete().neq("id", 0).execute()
         st.rerun()
+
+    # Download
+    history = load_history()
+    if history:
+        chat_text = ""
+        for msg in history:
+            role = "You" if msg["role"] == "user" else "Assistant"
+            chat_text += f"{role}:\n{msg['content']}\n\n"
+            if msg.get("sources"):
+                clean = re.sub('<[^<]+?>', '', msg["sources"])
+                chat_text += f"Sources: {clean}\n\n"
+            chat_text += "-" * 40 + "\n\n"
+
+        st.download_button(
+            label="📥 Download Chat",
+            data=chat_text,
+            file_name="health_consultation.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+
+        st.markdown("**Recent questions:**")
+        user_messages = [m for m in history if m["role"] == "user"][-15:]
+        for msg in reversed(user_messages):
+            st.markdown(f'<div class="history-item">💬 {msg["content"][:50]}...</div>', unsafe_allow_html=True)
 
 # Header
 st.markdown('<div class="main-title">💜 Health Knowledge Assistant</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Powered by your course material — ask anything</div>', unsafe_allow_html=True)
 
-# Chat history
+# Load chat from Supabase on first load
 if "messages" not in st.session_state:
     st.session_state.messages = []
+    history = load_history()
+    for msg in history:
+        st.session_state.messages.append({
+            "role": msg["role"],
+            "content": msg["content"],
+            "sources": msg.get("sources", "")
+        })
 
-# Display chat history
+# Display chat
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        if "sources" in message:
+        if message.get("sources"):
             st.markdown(message["sources"], unsafe_allow_html=True)
 
+# Handle new question
 if question := st.chat_input("Ask a question from the course material..."):
-    
+
     st.session_state.messages.append({"role": "user", "content": question})
+    save_message("user", question)
+
     with st.chat_message("user"):
         st.markdown(question)
 
     with st.chat_message("assistant"):
         with st.spinner("Searching knowledge base..."):
 
-            # Step 1: Embed the question
+            # Step 1: Embed
             q_embedding = get_embedding(question)
 
             # Step 2: Search Supabase
@@ -268,7 +310,7 @@ Answer:"""
             answer = ask_gpt(prompt)
             st.markdown(answer)
 
-            # Step 5: Show sources
+            # Step 5: Sources
             seen = set()
             source_tags = ""
             for r in results.data:
@@ -283,6 +325,7 @@ Answer:"""
             sources_html = f'<div class="source-card"><strong>📚 Sources used:</strong><br>{source_tags}</div>'
             st.markdown(sources_html, unsafe_allow_html=True)
 
+            save_message("assistant", answer, sources_html)
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": answer,
