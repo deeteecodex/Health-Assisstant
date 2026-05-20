@@ -2,7 +2,7 @@ import os
 import time
 import tempfile
 import streamlit as st
-from google import genai
+from openai import OpenAI
 from supabase import create_client
 from dotenv import load_dotenv
 from pathlib import Path
@@ -30,8 +30,8 @@ def check_password():
 
 check_password()
 
-# Connect to Google and Supabase
-client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+# Connect to OpenAI and Supabase
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 # Page config
@@ -112,6 +112,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Helper functions
+def get_embedding(text):
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text
+    )
+    return response.data[0].embedding
+
+def ask_gpt(prompt):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
 # Sidebar for PDF upload
 with st.sidebar:
     st.markdown("### 📚 Add New Knowledge")
@@ -149,23 +164,21 @@ with st.sidebar:
                         batch = valid_chunks[batch_start:batch_start + batch_size]
                         batch_texts = [c for _, c in batch]
 
-                        result = client.models.embed_content(
-                            model="gemini-embedding-001",
-                            contents=batch_texts,
-                            config={"output_dimensionality": 1536}
+                        response = client.embeddings.create(
+                            model="text-embedding-3-small",
+                            input=batch_texts
                         )
 
                         rows = []
                         for j, (i, chunk) in enumerate(batch):
                             rows.append({
                                 "content": chunk,
-                                "embedding": result.embeddings[j].values,
+                                "embedding": response.data[j].embedding,
                                 "metadata": {"source": uploaded_file.name, "chunk": i}
                             })
 
                         supabase.table("documents").insert(rows).execute()
                         progress.progress((batch_start + len(batch)) / len(valid_chunks))
-                        time.sleep(2)
 
                     st.success(f"✅ {uploaded_file.name} added successfully!")
                     os.unlink(tmp_path)
@@ -188,8 +201,10 @@ for message in st.session_state.messages:
         if "sources" in message:
             st.markdown(message["sources"], unsafe_allow_html=True)
 
-# Handle new question
+# Handle pending followup question
 pending = st.session_state.pop("pending_question", None)
+
+# Handle new question
 if question := (pending or st.chat_input("Ask a question from the course material...")):
 
     st.session_state.messages.append({"role": "user", "content": question})
@@ -198,31 +213,9 @@ if question := (pending or st.chat_input("Ask a question from the course materia
 
     with st.chat_message("assistant"):
         with st.spinner("Searching knowledge base..."):
-            max_retries = 3
 
-            # Step 0: Clean up the question
-            cleaned = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=f"Fix any typos and rephrase this health question clearly, return only the fixed question, nothing else: {question}"
-            )
-            question = cleaned.text.strip()
-
-            # Step 1: Embed the question with retry
-            q_embedding = None
-            for attempt in range(max_retries):
-                try:
-                    q_embedding = client.models.embed_content(
-                        model="gemini-embedding-001",
-                        contents=question,
-                        config={"output_dimensionality": 1536}
-                    ).embeddings[0].values
-                    break
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        time.sleep(3)
-                    else:
-                        st.warning("Google's servers are busy right now. Please try again in a moment 🙏")
-                        st.stop()
+            # Step 1: Embed the question
+            q_embedding = get_embedding(question)
 
             # Step 2: Search Supabase
             results = supabase.rpc("match_documents", {
@@ -234,7 +227,7 @@ if question := (pending or st.chat_input("Ask a question from the course materia
             # Step 3: Build context
             context = "\n\n".join([r["content"] for r in results.data])
 
-            # Step 4: Ask Gemini with retry
+            # Step 4: Ask GPT
             prompt = f"""You are a helpful health and nutrition assistant.
 Use ONLY the following information from the course material to answer the question.
 If the answer isn't in the material, say so honestly.
@@ -246,22 +239,7 @@ Question: {question}
 
 Answer:"""
 
-            response = None
-            for attempt in range(max_retries):
-                try:
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=prompt
-                    )
-                    break
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        time.sleep(3)
-                    else:
-                        st.warning("Google's servers are busy right now. Please try again in a moment 🙏")
-                        st.stop()
-
-            answer = response.text
+            answer = ask_gpt(prompt)
             st.markdown(answer)
 
             # Step 5: Show sources
@@ -285,12 +263,7 @@ And this answer: "{answer}"
 Generate exactly 3 short follow-up questions the user might want to ask next.
 Return ONLY the 3 questions, one per line, no numbering, no extra text."""
 
-            followup_response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=followup_prompt
-            )
-
-            followups = [q.strip() for q in followup_response.text.strip().split("\n") if q.strip()][:3]
+            followups = [q.strip() for q in ask_gpt(followup_prompt).strip().split("\n") if q.strip()][:3]
 
             st.markdown("**💡 You might also want to ask:**")
             for fq in followups:
