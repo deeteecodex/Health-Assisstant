@@ -201,12 +201,13 @@ for message in st.session_state.messages:
         if "sources" in message:
             st.markdown(message["sources"], unsafe_allow_html=True)
 
-# Handle pending followup question
-pending = st.session_state.pop("pending_question", None)
-
 # Handle new question
-if question := (pending or st.chat_input("Ask a question from the course material...")):
+pending = st.session_state.get("pending_question", None)
+if pending:
+    del st.session_state["pending_question"]
 
+if question := (pending or st.chat_input("Ask a question from the course material...")):
+    
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.markdown(question)
