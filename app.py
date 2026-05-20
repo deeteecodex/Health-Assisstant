@@ -185,6 +185,36 @@ with st.sidebar:
 
                 except Exception as e:
                     st.error(f"Something went wrong: {e}")
+# Chat History                    
+    st.markdown("---")
+    st.markdown("### 💬 Chat History")
+    
+    if st.button("📥 Download Chat", use_container_width=True):
+        if st.session_state.messages:
+            chat_text = ""
+            for msg in st.session_state.messages:
+                role = "You" if msg["role"] == "user" else "Assistant"
+                chat_text += f"{role}:\n{msg['content']}\n\n"
+                if "sources" in msg:
+                    # strip HTML tags for plain text
+                    import re
+                    clean = re.sub('<[^<]+?>', '', msg["sources"])
+                    chat_text += f"Sources: {clean}\n\n"
+                chat_text += "-" * 40 + "\n\n"
+
+            st.download_button(
+                label="📄 Click to Download",
+                data=chat_text,
+                file_name="health_consultation.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+        else:
+            st.warning("No chat history yet!")
+    
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
 
 # Header
 st.markdown('<div class="main-title">💜 Health Knowledge Assistant</div>', unsafe_allow_html=True)
