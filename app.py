@@ -76,6 +76,8 @@ st.markdown("""
         margin-top: 12px;
         font-size: 0.82rem;
         color: #c4b5fd;
+        overflow: hidden;
+        word-wrap: break-word;
     }
 
     .source-card strong {
@@ -91,6 +93,8 @@ st.markdown("""
         margin: 3px;
         font-size: 0.78rem;
         color: #d8b4fe;
+        white-space: normal;
+        word-break: break-word;
     }
 
     .stChatMessage {
