@@ -201,12 +201,7 @@ for message in st.session_state.messages:
         if "sources" in message:
             st.markdown(message["sources"], unsafe_allow_html=True)
 
-# Handle new question
-pending = st.session_state.get("pending_question", None)
-if pending:
-    del st.session_state["pending_question"]
-
-if question := (pending or st.chat_input("Ask a question from the course material...")):
+if question := st.chat_input("Ask a question from the course material..."):
     
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
@@ -257,20 +252,6 @@ Answer:"""
 
             sources_html = f'<div class="source-card"><strong>📚 Sources used:</strong><br>{source_tags}</div>'
             st.markdown(sources_html, unsafe_allow_html=True)
-
-            # Step 6: Follow-up questions
-            followup_prompt = f"""Based on this question: "{question}"
-And this answer: "{answer}"
-Generate exactly 3 short follow-up questions the user might want to ask next.
-Return ONLY the 3 questions, one per line, no numbering, no extra text."""
-
-            followups = [q.strip() for q in ask_gpt(followup_prompt).strip().split("\n") if q.strip()][:3]
-
-            st.markdown("**💡 You might also want to ask:**")
-            for fq in followups:
-                if st.button(fq, key=fq):
-                    st.session_state.pending_question = fq
-                    st.rerun()
 
             st.session_state.messages.append({
                 "role": "assistant",
