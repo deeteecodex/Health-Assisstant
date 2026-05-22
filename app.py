@@ -208,10 +208,14 @@ def extract_text_from_image(image_file):
                 },
                 {
                     "type": "text",
-                    "text": "Extract all text from this image. Return only the text, nothing else."
+                    "text": """Extract ALL text from this image completely. 
+If the image has multiple columns, read every column fully from top to bottom.
+Do not skip or summarize anything.
+Return only the raw extracted text, nothing else."""
                 }
             ]
-        }]
+        }],
+        max_tokens=4096
     )
     return response.choices[0].message.content
 
