@@ -242,10 +242,21 @@ with st.sidebar:
         uploaded_file = st.file_uploader("Choose an audio file", type=["mp3", "mp4", "wav", "m4a"])
 
     if uploaded_file is not None:
-        if st.button("⚡ Process File", use_container_width=True):
-            with st.spinner(f"Processing {uploaded_file.name}..."):
-                try:
-                    # Extract text based on file type
+       if st.button("⚡ Process File", use_container_width=True, disabled=st.session_state.get("processing", False)):
+    # Check for duplicate
+    existing = supabase.table("documents")\
+        .select("id")\
+        .eq("metadata->>source", uploaded_file.name)\
+        .limit(1)\
+        .execute()
+    
+    if existing.data:
+        st.warning(f"⚠️ '{uploaded_file.name}' has already been uploaded. Delete it from the database first if you want to re-upload.")
+    else:
+        st.session_state.processing = True
+        with st.spinner(f"Processing {uploaded_file.name}..."):
+            try:
+                # Extract text based on file type
                     if file_type == "PDF":
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                             tmp.write(uploaded_file.read())
@@ -271,6 +282,7 @@ with st.sidebar:
                     chunks = chunk_text(text)
                     embed_and_store(chunks, uploaded_file.name)
                     st.success(f"✅ {uploaded_file.name} added successfully!")
+                    st.session_state.processing = False
 
                 except Exception as e:
                     st.error(f"Something went wrong: {e}")
