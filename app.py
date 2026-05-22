@@ -227,6 +227,14 @@ def transcribe_audio(audio_file):
     os.unlink(tmp_path)
     return transcript.text
 
+def check_duplicate(filename):
+    existing = supabase.table("documents")\
+        .select("id")\
+        .eq("metadata->>source", filename)\
+        .limit(1)\
+        .execute()
+    return len(existing.data) > 0
+
 # Sidebar
 with st.sidebar:
     st.markdown("### 📚 Add New Knowledge")
@@ -242,52 +250,42 @@ with st.sidebar:
         uploaded_file = st.file_uploader("Choose an audio file", type=["mp3", "mp4", "wav", "m4a"])
 
     if uploaded_file is not None:
-       if st.button("⚡ Process File", use_container_width=True, disabled=st.session_state.get("processing", False)):
-    # Check for duplicate
-    existing = supabase.table("documents")\
-        .select("id")\
-        .eq("metadata->>source", uploaded_file.name)\
-        .limit(1)\
-        .execute()
-    
-    if existing.data:
-        st.warning(f"⚠️ '{uploaded_file.name}' has already been uploaded. Delete it from the database first if you want to re-upload.")
-    else:
-        st.session_state.processing = True
-        with st.spinner(f"Processing {uploaded_file.name}..."):
-            try:
-                # Extract text based on file type
-                    if file_type == "PDF":
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                            tmp.write(uploaded_file.read())
-                            tmp_path = tmp.name
-                        reader = PdfReader(tmp_path)
-                        text = ""
-                        for page in reader.pages:
-                            text += page.extract_text() + "\n"
-                        os.unlink(tmp_path)
+        if st.button("⚡ Process File", use_container_width=True, disabled=st.session_state.get("processing", False)):
+            if check_duplicate(uploaded_file.name):
+                st.warning(f"⚠️ '{uploaded_file.name}' has already been uploaded.")
+            else:
+                st.session_state.processing = True
+                with st.spinner(f"Processing {uploaded_file.name}..."):
+                    try:
+                        if file_type == "PDF":
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                                tmp.write(uploaded_file.read())
+                                tmp_path = tmp.name
+                            reader = PdfReader(tmp_path)
+                            text = ""
+                            for page in reader.pages:
+                                text += page.extract_text() + "\n"
+                            os.unlink(tmp_path)
 
-                    elif file_type == "Image":
-                        text = extract_text_from_image(uploaded_file)
+                        elif file_type == "Image":
+                            text = extract_text_from_image(uploaded_file)
 
-                    else:
-                        text = transcribe_audio(uploaded_file)
+                        else:
+                            text = transcribe_audio(uploaded_file)
 
-                    # Content moderation
-                    if moderate_content(text[:2000]):
-                        st.error("⚠️ This file contains inappropriate content and cannot be added.")
-                        st.stop()
+                        if moderate_content(text[:2000]):
+                            st.error("⚠️ This file contains inappropriate content and cannot be added.")
+                            st.session_state.processing = False
+                            st.stop()
 
-                    # Chunk and store
-                    chunks = chunk_text(text)
-                    embed_and_store(chunks, uploaded_file.name)
-                   st.success(f"✅ {uploaded_file.name} added successfully!")
-                    os.unlink(tmp_path)
-                    st.session_state.processing = False
+                        chunks = chunk_text(text)
+                        embed_and_store(chunks, uploaded_file.name)
+                        st.success(f"✅ {uploaded_file.name} added successfully!")
+                        st.session_state.processing = False
 
-                except Exception as e:
-                    st.error(f"Something went wrong: {e}")
-                    st.session_state.processing = False
+                    except Exception as e:
+                        st.error(f"Something went wrong: {e}")
+                        st.session_state.processing = False
 
     st.markdown("---")
 
