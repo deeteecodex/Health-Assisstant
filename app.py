@@ -349,7 +349,7 @@ if question := st.chat_input("Ask a question from the course material..."):
             # Step 2: Search Supabase
             results = supabase.rpc("match_documents", {
                 "query_embedding": q_embedding,
-                "match_threshold": 0.5,
+                "match_threshold": 0.3,
                 "match_count": 5
             }).execute()
 
