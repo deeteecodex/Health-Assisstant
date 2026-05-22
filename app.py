@@ -281,11 +281,13 @@ with st.sidebar:
                     # Chunk and store
                     chunks = chunk_text(text)
                     embed_and_store(chunks, uploaded_file.name)
-                    st.success(f"✅ {uploaded_file.name} added successfully!")
+                   st.success(f"✅ {uploaded_file.name} added successfully!")
+                    os.unlink(tmp_path)
                     st.session_state.processing = False
 
                 except Exception as e:
                     st.error(f"Something went wrong: {e}")
+                    st.session_state.processing = False
 
     st.markdown("---")
 
