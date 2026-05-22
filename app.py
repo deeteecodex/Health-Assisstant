@@ -1,5 +1,5 @@
 import os
-import time
+import re
 import tempfile
 import streamlit as st
 from openai import OpenAI
@@ -7,6 +7,8 @@ from supabase import create_client
 from dotenv import load_dotenv
 from pathlib import Path
 from pypdf import PdfReader
+from PIL import Image
+import base64
 
 # Load secrets
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
@@ -109,6 +111,16 @@ st.markdown("""
         border-top: 1px solid rgba(168, 85, 247, 0.2) !important;
         padding-top: 1rem !important;
     }
+
+    .history-item {
+        background: rgba(168, 85, 247, 0.1);
+        border: 1px solid rgba(168, 85, 247, 0.2);
+        border-radius: 8px;
+        padding: 8px 12px;
+        margin: 4px 0;
+        font-size: 0.8rem;
+        color: #c4b5fd;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -127,94 +139,211 @@ def ask_gpt(prompt):
     )
     return response.choices[0].message.content
 
-# Sidebar for PDF upload
+def save_message(role, content, sources=""):
+    supabase.table("conversations").insert({
+        "role": role,
+        "content": content,
+        "sources": sources
+    }).execute()
+
+def load_history():
+    result = supabase.table("conversations")\
+        .select("*")\
+        .order("created_at", desc=False)\
+        .execute()
+    return result.data
+
+def moderate_content(text):
+    response = client.moderations.create(input=text)
+    return response.results[0].flagged
+
+def chunk_text(text):
+    words = text.split()
+    chunks = []
+    start = 0
+    while start < len(words):
+        end = start + 500
+        chunk = " ".join(words[start:end])
+        chunks.append(chunk)
+        start = end - 50
+    return chunks
+
+def embed_and_store(chunks, source_name):
+    valid_chunks = [(i, c) for i, c in enumerate(chunks) if len(c.strip()) >= 50]
+    batch_size = 20
+    progress = st.progress(0)
+
+    for batch_start in range(0, len(valid_chunks), batch_size):
+        batch = valid_chunks[batch_start:batch_start + batch_size]
+        batch_texts = [c for _, c in batch]
+
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=batch_texts
+        )
+
+        rows = []
+        for j, (i, chunk) in enumerate(batch):
+            rows.append({
+                "content": chunk,
+                "embedding": response.data[j].embedding,
+                "metadata": {"source": source_name, "chunk": i}
+            })
+
+        supabase.table("documents").insert(rows).execute()
+        progress.progress((batch_start + len(batch)) / len(valid_chunks))
+
+def extract_text_from_image(image_file):
+    image_data = base64.b64encode(image_file.read()).decode("utf-8")
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{image_data}"
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": "Extract all text from this image. Return only the text, nothing else."
+                }
+            ]
+        }]
+    )
+    return response.choices[0].message.content
+
+def transcribe_audio(audio_file):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+        tmp.write(audio_file.read())
+        tmp_path = tmp.name
+    with open(tmp_path, "rb") as f:
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=f
+        )
+    os.unlink(tmp_path)
+    return transcript.text
+
+# Sidebar
 with st.sidebar:
     st.markdown("### 📚 Add New Knowledge")
-    st.caption("Upload a new PDF to add it to the knowledge base")
+    st.caption("Upload PDFs, images, or audio files")
 
-    uploaded_file = st.file_uploader("Choose a PDF", type="pdf")
+    file_type = st.selectbox("File type", ["PDF", "Image", "Audio"])
+
+    if file_type == "PDF":
+        uploaded_file = st.file_uploader("Choose a PDF", type="pdf")
+    elif file_type == "Image":
+        uploaded_file = st.file_uploader("Choose an image", type=["png", "jpg", "jpeg", "webp"])
+    else:
+        uploaded_file = st.file_uploader("Choose an audio file", type=["mp3", "mp4", "wav", "m4a"])
 
     if uploaded_file is not None:
-        if st.button("⚡ Process PDF", use_container_width=True):
+        if st.button("⚡ Process File", use_container_width=True):
             with st.spinner(f"Processing {uploaded_file.name}..."):
                 try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(uploaded_file.read())
-                        tmp_path = tmp.name
+                    # Extract text based on file type
+                    if file_type == "PDF":
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                            tmp.write(uploaded_file.read())
+                            tmp_path = tmp.name
+                        reader = PdfReader(tmp_path)
+                        text = ""
+                        for page in reader.pages:
+                            text += page.extract_text() + "\n"
+                        os.unlink(tmp_path)
 
-                    reader = PdfReader(tmp_path)
-                    text = ""
-                    for page in reader.pages:
-                        text += page.extract_text() + "\n"
+                    elif file_type == "Image":
+                        text = extract_text_from_image(uploaded_file)
 
-                    words = text.split()
-                    chunks = []
-                    start = 0
-                    while start < len(words):
-                        end = start + 500
-                        chunk = " ".join(words[start:end])
-                        chunks.append(chunk)
-                        start = end - 50
+                    else:
+                        text = transcribe_audio(uploaded_file)
 
-                    valid_chunks = [(i, c) for i, c in enumerate(chunks) if len(c.strip()) >= 50]
-                    batch_size = 20
-                    progress = st.progress(0)
+                    # Content moderation
+                    if moderate_content(text[:2000]):
+                        st.error("⚠️ This file contains inappropriate content and cannot be added.")
+                        st.stop()
 
-                    for batch_start in range(0, len(valid_chunks), batch_size):
-                        batch = valid_chunks[batch_start:batch_start + batch_size]
-                        batch_texts = [c for _, c in batch]
-
-                        response = client.embeddings.create(
-                            model="text-embedding-3-small",
-                            input=batch_texts
-                        )
-
-                        rows = []
-                        for j, (i, chunk) in enumerate(batch):
-                            rows.append({
-                                "content": chunk,
-                                "embedding": response.data[j].embedding,
-                                "metadata": {"source": uploaded_file.name, "chunk": i}
-                            })
-
-                        supabase.table("documents").insert(rows).execute()
-                        progress.progress((batch_start + len(batch)) / len(valid_chunks))
-
+                    # Chunk and store
+                    chunks = chunk_text(text)
+                    embed_and_store(chunks, uploaded_file.name)
                     st.success(f"✅ {uploaded_file.name} added successfully!")
-                    os.unlink(tmp_path)
 
                 except Exception as e:
                     st.error(f"Something went wrong: {e}")
+
+    st.markdown("---")
+
+    # Chat History
+    st.markdown("### 💬 Chat History")
+
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        supabase.table("conversations").delete().neq("id", 0).execute()
+        st.rerun()
+
+    history = load_history()
+    if history:
+        chat_text = ""
+        for msg in history:
+            role = "You" if msg["role"] == "user" else "Assistant"
+            chat_text += f"{role}:\n{msg['content']}\n\n"
+            if msg.get("sources"):
+                clean = re.sub('<[^<]+?>', '', msg["sources"])
+                chat_text += f"Sources: {clean}\n\n"
+            chat_text += "-" * 40 + "\n\n"
+
+        st.download_button(
+            label="📥 Download Chat",
+            data=chat_text,
+            file_name="health_consultation.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+
+        st.markdown("**Recent questions:**")
+        user_messages = [m for m in history if m["role"] == "user"][-20:]
+        for msg in reversed(user_messages):
+            st.markdown(f'<div class="history-item">💬 {msg["content"][:50]}...</div>', unsafe_allow_html=True)
 
 # Header
 st.markdown('<div class="main-title">💜 Health Knowledge Assistant</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Powered by your course material — ask anything</div>', unsafe_allow_html=True)
 
-# Chat history
+# Load chat from Supabase on first load
 if "messages" not in st.session_state:
     st.session_state.messages = []
+    history = load_history()
+    for msg in history:
+        st.session_state.messages.append({
+            "role": msg["role"],
+            "content": msg["content"],
+            "sources": msg.get("sources", "")
+        })
 
-# Display chat history
+# Display chat
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        if "sources" in message:
+        if message.get("sources"):
             st.markdown(message["sources"], unsafe_allow_html=True)
 
-# Handle pending followup question
-pending = st.session_state.pop("pending_question", None)
-
 # Handle new question
-if question := (pending or st.chat_input("Ask a question from the course material...")):
+if question := st.chat_input("Ask a question from the course material..."):
 
     st.session_state.messages.append({"role": "user", "content": question})
+    save_message("user", question)
+
     with st.chat_message("user"):
         st.markdown(question)
 
     with st.chat_message("assistant"):
         with st.spinner("Searching knowledge base..."):
 
-            # Step 1: Embed the question
+            # Step 1: Embed
             q_embedding = get_embedding(question)
 
             # Step 2: Search Supabase
@@ -242,7 +371,7 @@ Answer:"""
             answer = ask_gpt(prompt)
             st.markdown(answer)
 
-            # Step 5: Show sources
+            # Step 5: Sources
             seen = set()
             source_tags = ""
             for r in results.data:
@@ -257,20 +386,7 @@ Answer:"""
             sources_html = f'<div class="source-card"><strong>📚 Sources used:</strong><br>{source_tags}</div>'
             st.markdown(sources_html, unsafe_allow_html=True)
 
-            # Step 6: Follow-up questions
-            followup_prompt = f"""Based on this question: "{question}"
-And this answer: "{answer}"
-Generate exactly 3 short follow-up questions the user might want to ask next.
-Return ONLY the 3 questions, one per line, no numbering, no extra text."""
-
-            followups = [q.strip() for q in ask_gpt(followup_prompt).strip().split("\n") if q.strip()][:3]
-
-            st.markdown("**💡 You might also want to ask:**")
-            for fq in followups:
-                if st.button(fq, key=fq):
-                    st.session_state.pending_question = fq
-                    st.rerun()
-
+            save_message("assistant", answer, sources_html)
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": answer,

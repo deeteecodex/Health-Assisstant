@@ -3,3 +3,4 @@ supabase
 pypdf
 python-dotenv
 streamlit
+pillow
