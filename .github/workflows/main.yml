@@ -10,4 +10,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping Health Assistant
-        run: curl -s https://codex-healthassisstant.streamlit.app > /dev/null
+        run: curl -s https://health-assisstant.onrender.com > /dev/null
